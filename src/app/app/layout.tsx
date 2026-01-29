@@ -20,11 +20,18 @@ export default async function AppLayout({
 
   const supabase = await createClient();
 
-  const { data: profileData } = await supabase
-    .from('profiles')
-    .select('*')
-    .eq('id', user.id)
-    .single();
+  const [{ data: profileData }, { data: sessions }] = await Promise.all([
+    supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', user.id)
+      .single(),
+    supabase
+      .from('sessions')
+      .select('*')
+      .eq('user_id', user.id)
+      .order('updated_at', { ascending: false }),
+  ]);
 
   // Merge with user metadata (Google avatar, etc.)
   const profile = profileData ? {
@@ -35,7 +42,7 @@ export default async function AppLayout({
   } : null;
 
   return (
-    <SidebarProvider profile={profile}>
+    <SidebarProvider profile={profile} sessions={sessions || []}>
       <AppLayoutClient profile={profile}>
         {children}
       </AppLayoutClient>

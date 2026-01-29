@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { SparkInput } from '@/components/songsmith';
 import { suggestPerspectives } from '@/lib/actions/ai';
 import { Sparkles } from 'lucide-react';
+import { toast } from 'sonner';
 
 export default function NewSessionPage() {
   const router = useRouter();
@@ -52,10 +53,21 @@ export default function NewSessionPage() {
       const { error: boxError } = await supabase.from('boxes').insert(boxes);
       if (boxError) throw boxError;
 
+      // Create an initial empty draft
+      const { error: draftError } = await supabase.from('drafts').insert({
+        session_id: session.id,
+        content: '',
+        version: 1,
+      });
+      if (draftError) throw draftError;
+
+      toast.success('Session created! Start exploring your spark.');
+
       // Redirect to the session workspace
       router.push(`/app/sessions/${session.id}`);
     } catch (error) {
       console.error('Error creating session:', error);
+      toast.error('Failed to create session. Please try again.');
       setIsLoading(false);
     }
   };
