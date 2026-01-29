@@ -9,8 +9,26 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Timer } from '@/components/songsmith';
-import { Boxes, Key, PenLine, FileText, Sparkles, Check, Loader2, ArrowLeft, X, Plus } from 'lucide-react';
+import { ContentTopbar } from '@/components/layout/content-topbar';
+import { Boxes, Key, PenLine, FileText, Sparkles, Check, Loader2, ArrowLeft, X, Plus, Pencil, ChevronDown, Circle, CheckCircle2, Archive, Trash2, MoreHorizontal } from 'lucide-react';
 import { toast } from 'sonner';
 import Link from 'next/link';
 import type { Session, Box, AnchorWord, Rhyme, Draft, Perspective } from '@/types/songsmith';
@@ -37,6 +55,18 @@ export function SessionWorkspace({
 
   const [activeTab, setActiveTab] = useState('boxes');
   const [activePerspective, setActivePerspective] = useState(0);
+
+  // Local state for session title
+  const [sessionTitle, setSessionTitle] = useState(session.title || '');
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [titleSaveStatus, setTitleSaveStatus] = useState<SaveStatus>('saved');
+  const titleInputRef = useRef<HTMLInputElement>(null);
+  const titleSaveTimer = useRef<NodeJS.Timeout | undefined>(undefined);
+
+  // Local state for session status
+  const [sessionStatus, setSessionStatus] = useState<Session['status']>(session.status);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // Local state for boxes
   const [boxes, setBoxes] = useState(initialBoxes);
@@ -79,6 +109,93 @@ export function SessionWorkspace({
 
   const perspectives = session.perspectives as Perspective[];
   const currentBox = boxes.find((b) => b.perspective_index === activePerspective);
+
+  // Progress calculations
+  const boxesWithContent = boxes.filter((b) => b.content && b.content.length > 0).length;
+  const filledAnchors = anchorWords.filter((a) => a !== null && a.word.trim().length > 0).length;
+  const totalRhymes = Array.from(rhymes.values()).reduce((sum, arr) => sum + arr.length, 0);
+  const hasDraft = draftContent.trim().length > 0;
+
+  // Save session title
+  const saveTitle = useCallback(async (title: string) => {
+    setTitleSaveStatus('saving');
+    try {
+      const { error } = await supabase
+        .from('sessions')
+        .update({ title: title.trim() || null })
+        .eq('id', session.id);
+
+      if (error) throw error;
+      setTitleSaveStatus('saved');
+    } catch (error) {
+      console.error('Error saving title:', error);
+      setTitleSaveStatus('unsaved');
+      toast.error('Failed to save title');
+    }
+  }, [session.id, supabase]);
+
+  // Handle title change with debounce
+  const handleTitleChange = useCallback((title: string) => {
+    setSessionTitle(title);
+    setTitleSaveStatus('unsaved');
+
+    if (titleSaveTimer.current) {
+      clearTimeout(titleSaveTimer.current);
+    }
+    titleSaveTimer.current = setTimeout(() => {
+      saveTitle(title);
+    }, 500);
+  }, [saveTitle]);
+
+  // Focus title input when editing starts
+  useEffect(() => {
+    if (isEditingTitle && titleInputRef.current) {
+      titleInputRef.current.focus();
+      titleInputRef.current.select();
+    }
+  }, [isEditingTitle]);
+
+  // Update session status
+  const updateSessionStatus = useCallback(async (newStatus: Session['status']) => {
+    const previousStatus = sessionStatus;
+    setSessionStatus(newStatus);
+
+    try {
+      const { error } = await supabase
+        .from('sessions')
+        .update({ status: newStatus })
+        .eq('id', session.id);
+
+      if (error) throw error;
+
+      toast.success(`Session marked as ${newStatus}`);
+    } catch (error) {
+      console.error('Error updating status:', error);
+      setSessionStatus(previousStatus);
+      toast.error('Failed to update status');
+    }
+  }, [session.id, sessionStatus, supabase]);
+
+  // Delete session
+  const deleteSession = useCallback(async () => {
+    setIsDeleting(true);
+    try {
+      // Delete session (cascade will handle related records)
+      const { error } = await supabase
+        .from('sessions')
+        .delete()
+        .eq('id', session.id);
+
+      if (error) throw error;
+
+      toast.success('Session deleted');
+      router.push('/app');
+    } catch (error) {
+      console.error('Error deleting session:', error);
+      toast.error('Failed to delete session');
+      setIsDeleting(false);
+    }
+  }, [session.id, supabase, router]);
 
   // Save box content
   const saveBox = useCallback(async (boxId: string, content: string, durationSeconds?: number) => {
@@ -348,6 +465,7 @@ export function SessionWorkspace({
   // Save on unmount
   useEffect(() => {
     return () => {
+      if (titleSaveTimer.current) clearTimeout(titleSaveTimer.current);
       if (boxSaveTimer.current) clearTimeout(boxSaveTimer.current);
       if (anchorSaveTimer.current) clearTimeout(anchorSaveTimer.current);
       if (draftSaveTimer.current) clearTimeout(draftSaveTimer.current);
@@ -378,42 +496,153 @@ export function SessionWorkspace({
   };
 
   return (
-    <div className="pt-16 lg:pt-0 min-h-screen">
-      <div className="max-w-5xl mx-auto px-4 py-6 lg:py-10">
-        {/* Header */}
-        <div className="mb-6">
-          <Link
-            href="/app"
-            className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground mb-4"
-          >
-            <ArrowLeft className="h-4 w-4" />
-            Back to sessions
-          </Link>
-          <div className="flex items-center gap-2 text-sm text-muted-foreground mb-2">
-            <Sparkles className="h-4 w-4 text-teal" />
-            <span>Spark</span>
+    <>
+      <ContentTopbar>
+        {/* Status dropdown in topbar */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="sm" className="gap-1.5">
+              {sessionStatus === 'active' && (
+                <>
+                  <Circle className="h-3 w-3 text-teal fill-teal" />
+                  <span className="hidden sm:inline">Active</span>
+                </>
+              )}
+              {sessionStatus === 'completed' && (
+                <>
+                  <CheckCircle2 className="h-3 w-3 text-green-600" />
+                  <span className="hidden sm:inline">Completed</span>
+                </>
+              )}
+              {sessionStatus === 'archived' && (
+                <>
+                  <Archive className="h-3 w-3 text-muted-foreground" />
+                  <span className="hidden sm:inline">Archived</span>
+                </>
+              )}
+              <ChevronDown className="h-3 w-3" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem
+              onClick={() => updateSessionStatus('active')}
+              className="gap-2"
+            >
+              <Circle className="h-3 w-3 text-teal fill-teal" />
+              Active
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={() => updateSessionStatus('completed')}
+              className="gap-2"
+            >
+              <CheckCircle2 className="h-3 w-3 text-green-600" />
+              Completed
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={() => updateSessionStatus('archived')}
+              className="gap-2"
+            >
+              <Archive className="h-3 w-3 text-muted-foreground" />
+              Archived
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              onClick={() => setShowDeleteDialog(true)}
+              className="gap-2 text-destructive focus:text-destructive"
+            >
+              <Trash2 className="h-3 w-3" />
+              Delete Session
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </ContentTopbar>
+
+      <div className="pt-16 lg:pt-0 min-h-screen">
+        <div className="max-w-5xl mx-auto px-4 py-6 lg:py-10">
+          {/* Header */}
+          <div className="mb-6">
+            {/* Editable title */}
+            <div className="flex items-center gap-2 mb-3">
+              {isEditingTitle ? (
+                <div className="flex items-center gap-2 flex-1">
+                  <Input
+                    ref={titleInputRef}
+                    value={sessionTitle}
+                    onChange={(e) => handleTitleChange(e.target.value)}
+                    onBlur={() => setIsEditingTitle(false)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === 'Escape') {
+                        setIsEditingTitle(false);
+                      }
+                    }}
+                    placeholder="Give your session a title..."
+                    className="text-2xl font-serif font-semibold h-auto py-1 px-2 border-none bg-muted/50 focus-visible:ring-1"
+                  />
+                  <SaveIndicator status={titleSaveStatus} />
+                </div>
+              ) : (
+                <button
+                  onClick={() => setIsEditingTitle(true)}
+                  className="group flex items-center gap-2 text-left hover:bg-muted/50 rounded-md px-2 py-1 -mx-2 transition-colors"
+                >
+                  <h1 className="text-2xl font-serif font-semibold">
+                    {sessionTitle || 'Untitled Session'}
+                  </h1>
+                  <Pencil className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+                </button>
+              )}
+            </div>
+
+            {/* Spark */}
+            <div className="flex items-center gap-2 text-sm text-muted-foreground mb-1">
+              <Sparkles className="h-4 w-4 text-teal" />
+              <span>Spark</span>
+            </div>
+            <p className="text-base font-serif italic text-muted-foreground">&ldquo;{session.spark}&rdquo;</p>
           </div>
-          <p className="text-lg font-serif italic">&ldquo;{session.spark}&rdquo;</p>
-        </div>
 
         {/* Phase Tabs */}
         <Tabs value={activeTab} onValueChange={setActiveTab}>
           <TabsList className="grid w-full grid-cols-4 mb-6">
-            <TabsTrigger value="boxes" className="gap-2">
+            <TabsTrigger value="boxes" className="gap-2 relative">
               <Boxes className="h-4 w-4" />
               <span className="hidden sm:inline">Boxes</span>
+              {boxesWithContent > 0 && (
+                <span className={`absolute -top-1 -right-1 min-w-[18px] h-[18px] flex items-center justify-center text-[10px] font-medium rounded-full ${
+                  boxesWithContent === 3 ? 'bg-teal text-white' : 'bg-muted-foreground/20 text-muted-foreground'
+                }`}>
+                  {boxesWithContent === 3 ? <Check className="h-3 w-3" /> : `${boxesWithContent}/3`}
+                </span>
+              )}
             </TabsTrigger>
-            <TabsTrigger value="anchors" className="gap-2">
+            <TabsTrigger value="anchors" className="gap-2 relative">
               <Key className="h-4 w-4" />
               <span className="hidden sm:inline">Anchors</span>
+              {filledAnchors > 0 && (
+                <span className={`absolute -top-1 -right-1 min-w-[18px] h-[18px] flex items-center justify-center text-[10px] font-medium rounded-full ${
+                  filledAnchors === 9 ? 'bg-teal text-white' : 'bg-muted-foreground/20 text-muted-foreground'
+                }`}>
+                  {filledAnchors === 9 ? <Check className="h-3 w-3" /> : `${filledAnchors}/9`}
+                </span>
+              )}
             </TabsTrigger>
-            <TabsTrigger value="rhymes" className="gap-2">
+            <TabsTrigger value="rhymes" className="gap-2 relative">
               <FileText className="h-4 w-4" />
               <span className="hidden sm:inline">Rhymes</span>
+              {totalRhymes > 0 && (
+                <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] flex items-center justify-center text-[10px] font-medium rounded-full bg-muted-foreground/20 text-muted-foreground">
+                  {totalRhymes}
+                </span>
+              )}
             </TabsTrigger>
-            <TabsTrigger value="draft" className="gap-2">
+            <TabsTrigger value="draft" className="gap-2 relative">
               <PenLine className="h-4 w-4" />
               <span className="hidden sm:inline">Draft</span>
+              {hasDraft && (
+                <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] flex items-center justify-center rounded-full bg-teal text-white">
+                  <Check className="h-3 w-3" />
+                </span>
+              )}
             </TabsTrigger>
           </TabsList>
 
@@ -474,6 +703,19 @@ export function SessionWorkspace({
                 </p>
               </CardContent>
             </Card>
+
+            {/* Next phase prompt */}
+            {boxesWithContent === 3 && (
+              <div className="flex items-center justify-between p-4 bg-teal/10 border border-teal/20 rounded-lg">
+                <div>
+                  <p className="font-medium text-sm">All perspectives explored!</p>
+                  <p className="text-sm text-muted-foreground">Ready to extract your anchor words?</p>
+                </div>
+                <Button onClick={() => setActiveTab('anchors')}>
+                  Continue to Anchors
+                </Button>
+              </div>
+            )}
           </TabsContent>
 
           {/* Anchors Phase */}
@@ -534,6 +776,21 @@ export function SessionWorkspace({
                 </div>
               </CardContent>
             </Card>
+
+            {/* Next phase prompt */}
+            {filledAnchors >= 3 && (
+              <div className="flex items-center justify-between p-4 bg-teal/10 border border-teal/20 rounded-lg mt-4">
+                <div>
+                  <p className="font-medium text-sm">
+                    {filledAnchors === 9 ? 'All anchor words selected!' : `${filledAnchors} anchor words selected`}
+                  </p>
+                  <p className="text-sm text-muted-foreground">Ready to build your rhyme palette?</p>
+                </div>
+                <Button onClick={() => setActiveTab('rhymes')}>
+                  Continue to Rhymes
+                </Button>
+              </div>
+            )}
           </TabsContent>
 
           {/* Rhymes Phase */}
@@ -671,6 +928,19 @@ export function SessionWorkspace({
                 )}
               </CardContent>
             </Card>
+
+            {/* Next phase prompt */}
+            {totalRhymes >= 3 && (
+              <div className="flex items-center justify-between p-4 bg-teal/10 border border-teal/20 rounded-lg mt-4">
+                <div>
+                  <p className="font-medium text-sm">{totalRhymes} rhymes in your palette!</p>
+                  <p className="text-sm text-muted-foreground">Ready to start drafting your lyric?</p>
+                </div>
+                <Button onClick={() => setActiveTab('draft')}>
+                  Continue to Draft
+                </Button>
+              </div>
+            )}
           </TabsContent>
 
           {/* Draft Phase */}
@@ -746,5 +1016,35 @@ export function SessionWorkspace({
         </Tabs>
       </div>
     </div>
+
+      {/* Delete confirmation dialog */}
+      <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this session?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently delete this session and all its content including boxes, anchor words, rhymes, and drafts. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={deleteSession}
+              disabled={isDeleting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {isDeleting ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Deleting...
+                </>
+              ) : (
+                'Delete'
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 }
